@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import random
 import numpy as np
+import matplotlib.pyplot as plt
 
 class DDQN(nn.Module):
     def __init__(self, input_size, action_num):
@@ -21,9 +22,10 @@ class DDQN(nn.Module):
             nn.Linear(32, action_num)
         )
         
+        print(2)
         # synchronize the two networks
-        for para, target_para in zip(self.model.parameters(), self.target_model.parameters()):
-            target_para.data = para.data.clone()
+        # for para, target_para in zip(self.model.parameters(), self.target_model.parameters()):
+        #     target_para.data = para.data.clone()
             # print(type(para))
         
         
@@ -39,6 +41,8 @@ class DDQN(nn.Module):
     
     def epsilon_policy(self, state, epsilon):
         
+        # epsilon = epsilon + 0.88 ** 
+        
         if random.uniform(0,1) < epsilon:
             return random.randint(0,self.action_num - 1)
         else:
@@ -49,7 +53,7 @@ class DDQN(nn.Module):
     
     def update_target(self, tau):
         for para, target_para in zip(self.model.parameters(), self.target_model.parameters()):
-            target_para = tau * para + (1-tau) * target_para 
+            target_para.data = tau * para.data.clone() + (1-tau) * target_para.data.clone() 
     
     # def predicate(self, state):
     #     output = self.model(state)
@@ -57,15 +61,15 @@ class DDQN(nn.Module):
 
 class Trainer:
     def __init__(self, env, model, 
-                 step_per_epoch = 1000, 
-                 updata_num_per_step = 20,
+                 step_per_epoch = 750, 
+                 updata_num_per_step = 750,
                  epoch=20, 
-                 batch_size=32, 
+                 batch_size=64, 
                  lr=1e-3, 
                  initialization_num=100000, 
                  epsilon = 0.1, 
                  buffer_capacity=100000,
-                 update_target=0.3,
+                 update_target=0.1,
                  ) -> None:
         self.buffer = [] # store training samples
         self.env = env # 训练时玩家采用带DQN的ε-greedy策略，庄家采用简单的17策略 TODO:比较庄家和玩家策略相同时的结果
@@ -116,6 +120,7 @@ class Trainer:
         
         for epo_idx in range(self.epoch):
             print(f'epoch: [{epo_idx}/{self.epoch}]')
+            loss_list = []
             for step in range(self.step_per_epoch):
                 
                 idx_list = [random.randint(0, len(self.buffer)-1) for _ in range(self.batch_size)]
@@ -123,13 +128,13 @@ class Trainer:
                 
                 # calculate loss and update parameters
                 s0_batch = [sample[0] for sample in train_batch]
-                a0_batch = [sample[1] for sample in train_batch]
+                a0_batch = np.array([sample[1] for sample in train_batch])
                 r0_batch = [sample[2] for sample in train_batch]
                 s1_batch = [sample[3] for sample in train_batch]
                 
                 output = self.model(s0_batch, False)
-                
-                q0_batch = torch.Tensor([row[a0_batch[idx]] for idx, row in enumerate(output)])
+                a0_batch = torch.from_numpy(a0_batch).long()
+                q0_batch = output[torch.arange(output.size(0)), a0_batch]
                 
                 # with torch.no_grad():
                 #     # do not update the target model here
@@ -138,23 +143,15 @@ class Trainer:
             
                 TD_error = q0_batch - (q1_batch + torch.Tensor(r0_batch))
                 
-                loss = 0.5 * (TD_error * TD_error).sum()
+                loss = 0.5 * (TD_error * TD_error).mean()
                 
+                if step % 100 == 0:
+                    loss_list.append(loss)
+                
+                self.optimizor.zero_grad()
                 loss.backward()
+                
                 self.optimizor.step()
-                
-                # check if parameters in target model are updated
-                old_para = self.model.model.parameters()
-                old_para_target = self.model.target_model.parameters()
-                
-                # print("=====Model=====")
-                # for old_p, new_p in zip(old_para, self.model.model.parameters()):
-                #     print(old_p == new_p)
-                    
-                # print("\n=====Target Model=====")
-                # for old_p_t, new_p_t in zip(old_para_target, self.model.target_model.parameters()):
-                #     print(old_p_t == new_p_t)
-                
                 
                 self.model.update_target(self.update_target)
                 print("\r", f'step:[{step}/{self.step_per_epoch}], loss:{loss}',end="",flush=True)
@@ -191,7 +188,16 @@ class Trainer:
                 
                 
                 # break
-                
+            
+            plt.figure()
+            plt.plot(np.arange(len(loss_list)), loss_list)
+            plt.savefig('./loss.jpg')
+
+            
+            
+            if epo_idx % 10 == 0:
+                torch.save(self.model.state_dict(), f'./checkpoint/{epo_idx}.pth')
+            
         
                  
 class DDQN_Policy:
